@@ -2,7 +2,7 @@
 
 var inherits = require('util').inherits,
     debug = require('debug')('homebridge-vorwerk-vr7'),
-    vorwerk = require('./lib/vorwerk-vr7-api'),
+    vorwerk = require('./lib/vorwerk-orbital-api'),
     Service,
     Characteristic;
 
@@ -26,7 +26,7 @@ function VorwerkVR7VacuumRobotPlatform(log, config) {
     }
     
     debug("Refresh is set to: " + this.refresh);
-    this.log("Vorwerk VR7 Platform Plugin Loaded");
+    this.log("Vorwerk VR7 Platform Plugin Loaded (Orbital API)");
 }
 
 VorwerkVR7VacuumRobotPlatform.prototype = {
@@ -45,14 +45,14 @@ VorwerkVR7VacuumRobotPlatform.prototype = {
     },
 
     getRobots: function (callback) {
-        debug("Loading your VR7 robots");
+        debug("Loading your VR7 robots from Orbital API");
         let client = new vorwerk.Client();
         client.setToken(this.token);
         let that = this;
 
         client.getRobots(function (error, robots) {
             if (error) {
-                that.log.error("Can't connect to Vorwerk VR7 API");
+                that.log.error("Can't connect to Vorwerk Orbital API");
                 that.log.error(error);
                 that.robots = [];
                 callback();
@@ -92,7 +92,6 @@ function VorwerkVR7VacuumRobotAccessory(robot, platform) {
 
 VorwerkVR7VacuumRobotAccessory.prototype = {
     identify: function (callback) {
-        let that = this;
         this.log(this.robot);
         callback();
     },
@@ -152,7 +151,7 @@ VorwerkVR7VacuumRobotAccessory.prototype = {
                     debug("Start cleaning");
                     let eco = that.vacuumRobotEcoService.getCharacteristic(Characteristic.On).value;
                     let nogoLines = that.vacuumRobotNoGoLinesService.getCharacteristic(Characteristic.On).value;
-                    that.robot.startCleaning(eco, 1, nogoLines, callback);
+                    that.robot.startCleaning(eco, 'normal', nogoLines, callback);
                 } else {
                     callback();
                 }
@@ -173,7 +172,7 @@ VorwerkVR7VacuumRobotAccessory.prototype = {
             if (on && that.robot.canStart) {
                 debug("Start spot cleaning");
                 let eco = that.vacuumRobotEcoService.getCharacteristic(Characteristic.On).value;
-                that.robot.startSpotCleaning(eco, 200, 200, false, 1, callback);
+                that.robot.startSpotCleaning(eco, 200, 200, false, 'normal', callback);
             } else {
                 callback();
             }
@@ -181,7 +180,6 @@ VorwerkVR7VacuumRobotAccessory.prototype = {
     },
 
     setGoToDock: function (on, callback) {
-        let that = this;
         if (on) {
             debug("Go to dock");
             this.robot.sendToBase(callback);

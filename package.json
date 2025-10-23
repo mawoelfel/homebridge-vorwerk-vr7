@@ -1,7 +1,7 @@
 {
   "name": "homebridge-vorwerk-vr7",
   "version": "2.0.0",
-  "description": "Vorwerk Kobold VR7 vacuum robot plugin for Homebridge with new API support",
+  "description": "Vorwerk Kobold VR7 vacuum robot plugin for Homebridge using Orbital API",
   "author": "mawoelfel",
   "license": "MIT",
   "main": "index.js",
@@ -12,7 +12,8 @@
     "vr7",
     "vacuum",
     "robot",
-    "smart home"
+    "smart home",
+    "orbital"
   ],
   "engines": {
     "node": ">=14.0.0",

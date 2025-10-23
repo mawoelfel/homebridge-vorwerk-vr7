@@ -1,10 +1,10 @@
 # homebridge-vorwerk-vr7
 
-A Homebridge plugin for the **Vorwerk Kobold VR7** vacuum robot using the new Companion API.
+A Homebridge plugin for the **Vorwerk Kobold VR7** vacuum robot using the Orbital API.
 
 ## ✨ Features
 
-- ✅ Start/Pause cleaning
+- ✅ Start/Pause/Resume cleaning
 - ✅ Spot cleaning
 - ✅ Return to dock
 - ✅ Battery status
