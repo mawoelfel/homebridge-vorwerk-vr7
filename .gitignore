@@ -1,0 +1,8 @@
+*.log
+npm-debug.log*
+node_modules/
+.idea
+.vscode
+*.swp
+.DS_Store
+Thumbs.db
