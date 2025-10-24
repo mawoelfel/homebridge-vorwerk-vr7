@@ -1,32 +1,41 @@
 {
   "name": "homebridge-vorwerk-vr7",
-  "version": "2.1.0",
-  "description": "Vorwerk Kobold VR7 vacuum robot plugin for Homebridge using Orbital API",
-  "author": "mawoelfel",
-  "license": "MIT",
+  "version": "3.0.0",
+  "description": "Homebridge plugin for Vorwerk Kobold VR7 vacuum robot - FULLY WORKING with correct API endpoints",
   "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mawoelfel/homebridge-vorwerk-vr7.git"
+  },
   "keywords": [
     "homebridge-plugin",
+    "homebridge",
     "vorwerk",
     "kobold",
     "vr7",
     "vacuum",
     "robot",
     "smart home",
-    "orbital"
+    "homekit",
+    "orbital api",
+    "working",
+    "pause",
+    "resume",
+    "dock"
   ],
-  "engines": {
-    "node": ">=14.0.0",
-    "homebridge": ">=1.3.0"
-  },
-  "repository": {
-    "type": "git",
-    "url": "git://github.com/mawoelfel/homebridge-vorwerk-vr7.git"
-  },
+  "author": "Marcel Wölfel <mawoelfel>",
+  "license": "MIT",
   "bugs": {
     "url": "https://github.com/mawoelfel/homebridge-vorwerk-vr7/issues"
   },
   "homepage": "https://github.com/mawoelfel/homebridge-vorwerk-vr7#readme",
+  "engines": {
+    "node": ">=14.0.0",
+    "homebridge": ">=1.3.0"
+  },
   "dependencies": {
     "debug": "^4.3.4"
   }

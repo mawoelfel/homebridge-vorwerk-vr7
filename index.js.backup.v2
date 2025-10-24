@@ -1,0 +1,328 @@
+"use strict";
+
+var inherits = require('util').inherits,
+    debug = require('debug')('homebridge-vorwerk-vr7'),
+    vorwerk = require('./lib/vorwerk-orbital-api'),
+    Service,
+    Characteristic;
+
+module.exports = function (homebridge) {
+    Service = homebridge.hap.Service;
+    Characteristic = homebridge.hap.Characteristic;
+    homebridge.registerPlatform("homebridge-vorwerk-vr7", "VorwerkVR7VacuumRobot", VorwerkVR7VacuumRobotPlatform);
+};
+
+function VorwerkVR7VacuumRobotPlatform(log, config) {
+    this.log = log;
+    this.token = config['token'];
+    this.hiddenServices = ('disabled' in config ? config['disabled'] : '');
+
+    if ('refresh' in config && config['refresh'] !== 'auto') {
+        this.refresh = parseInt(config['refresh']);
+        this.refresh = (typeof this.refresh !== 'number' || (this.refresh % 1) !== 0 || this.refresh < 0) ? 60 : this.refresh;
+        this.refresh = (this.refresh > 0 && this.refresh < 60) ? 60 : this.refresh;
+    } else {
+        this.refresh = 'auto';
+    }
+    
+    debug("Refresh is set to: " + this.refresh);
+    this.log("Vorwerk VR7 Platform Plugin Loaded (Orbital API v2)");
+}
+
+VorwerkVR7VacuumRobotPlatform.prototype = {
+    accessories: function (callback) {
+        this.accessories = [];
+        let that = this;
+        
+        this.getRobots(function () {
+            for (var i = 0; i < that.robots.length; i++) {
+                that.log("Found VR7 robot #" + (i + 1) + " named \"" + that.robots[i].name + "\"");
+                var robotAccessory = new VorwerkVR7VacuumRobotAccessory(that.robots[i], that);
+                that.accessories.push(robotAccessory);
+            }
+            callback(that.accessories);
+        });
+    },
+
+    getRobots: function (callback) {
+        debug("Loading your VR7 robots from Orbital API");
+        let client = new vorwerk.Client();
+        client.setToken(this.token);
+        let that = this;
+
+        client.getRobots(function (error, robots) {
+            if (error) {
+                that.log.error("Can't connect to Vorwerk Orbital API");
+                that.log.error(error);
+                that.robots = [];
+                callback();
+            } else {
+                if (robots.length === 0) {
+                    that.log.error("No VR7 robots found in your account.");
+                    that.robots = [];
+                } else {
+                    debug("Found " + robots.length + " VR7 robot(s)");
+                    that.robots = robots;
+                }
+                callback();
+            }
+        });
+    }
+};
+
+function VorwerkVR7VacuumRobotAccessory(robot, platform) {
+    this.platform = platform;
+    this.log = platform.log;
+    this.refresh = platform.refresh;
+    this.hiddenServices = platform.hiddenServices;
+    this.robot = robot;
+    this.name = robot.name;
+    this.lastUpdate = null;
+
+    // Services mit eindeutigen Namen
+    this.vacuumRobotCleanService = new Service.Switch(this.name + " Clean", "clean");
+    this.vacuumRobotSpotCleanService = new Service.Switch(this.name + " Spot Clean", "spotClean");
+    this.vacuumRobotGoToDockService = new Service.Switch(this.name + " Dock", "goToDock");
+    this.vacuumRobotDockStateService = new Service.OccupancySensor(this.name + " Docked", "dockState");
+    this.vacuumRobotEcoService = new Service.Switch(this.name + " Eco", "eco");
+    this.vacuumRobotNoGoLinesService = new Service.Switch(this.name + " NoGo", "noGoLines");
+    this.vacuumRobotBatteryService = new Service.BatteryService(this.name + " Battery", "battery");
+
+    this.updateRobotTimer();
+}
+
+VorwerkVR7VacuumRobotAccessory.prototype = {
+    identify: function (callback) {
+        this.log(this.robot);
+        callback();
+    },
+
+    getServices: function () {
+        this.informationService = new Service.AccessoryInformation();
+        this.informationService
+            .setCharacteristic(Characteristic.Name, this.robot.name)
+            .setCharacteristic(Characteristic.Manufacturer, "Vorwerk Deutschland")
+            .setCharacteristic(Characteristic.Model, "Kobold VR7")
+            .setCharacteristic(Characteristic.SerialNumber, this.robot._serial);
+
+        this.vacuumRobotCleanService.getCharacteristic(Characteristic.On).on('set', this.setClean.bind(this));
+        this.vacuumRobotCleanService.getCharacteristic(Characteristic.On).on('get', this.getClean.bind(this));
+
+        this.vacuumRobotGoToDockService.getCharacteristic(Characteristic.On).on('set', this.setGoToDock.bind(this));
+        this.vacuumRobotGoToDockService.getCharacteristic(Characteristic.On).on('get', this.getGoToDock.bind(this));
+
+        this.vacuumRobotDockStateService.getCharacteristic(Characteristic.OccupancyDetected).on('get', this.getDock.bind(this));
+
+        this.vacuumRobotEcoService.getCharacteristic(Characteristic.On).on('set', this.setEco.bind(this));
+        this.vacuumRobotEcoService.getCharacteristic(Characteristic.On).on('get', this.getEco.bind(this));
+
+        this.vacuumRobotNoGoLinesService.getCharacteristic(Characteristic.On).on('set', this.setNoGoLines.bind(this));
+        this.vacuumRobotNoGoLinesService.getCharacteristic(Characteristic.On).on('get', this.getNoGoLines.bind(this));
+
+        this.vacuumRobotBatteryService.getCharacteristic(Characteristic.BatteryLevel).on('get', this.getBatteryLevel.bind(this));
+        this.vacuumRobotBatteryService.getCharacteristic(Characteristic.ChargingState).on('get', this.getBatteryChargingState.bind(this));
+
+        this.vacuumRobotSpotCleanService.getCharacteristic(Characteristic.On).on('set', this.setSpotClean.bind(this));
+        this.vacuumRobotSpotCleanService.getCharacteristic(Characteristic.On).on('get', this.getSpotClean.bind(this));
+
+        this.services = [this.informationService, this.vacuumRobotCleanService, this.vacuumRobotBatteryService];
+        
+        if (this.hiddenServices.indexOf('dock') === -1)
+            this.services.push(this.vacuumRobotGoToDockService);
+        if (this.hiddenServices.indexOf('dockstate') === -1)
+            this.services.push(this.vacuumRobotDockStateService);
+        if (this.hiddenServices.indexOf('eco') === -1)
+            this.services.push(this.vacuumRobotEcoService);
+        if (this.hiddenServices.indexOf('nogolines') === -1)
+            this.services.push(this.vacuumRobotNoGoLinesService);
+        if (this.hiddenServices.indexOf('spot') === -1)
+            this.services.push(this.vacuumRobotSpotCleanService);
+            
+        return this.services;
+    },
+
+    setClean: function (on, callback) {
+        let that = this;
+        this.log("Clean switch:", on ? "ON" : "OFF");
+        
+        this.updateRobot(function (err) {
+            if (err) {
+                that.log.error("Can't update robot state");
+                return callback(err);
+            }
+            
+            if (on) {
+                // Einschalten = Start oder Resume
+                if (that.robot.canResume) {
+                    that.log("Resuming cleaning...");
+                    that.robot.resumeCleaning(function(error) {
+                        if (error) {
+                            that.log.error("Resume failed:", error.message);
+                        }
+                        callback(error);
+                    });
+                } else if (that.robot.canStart) {
+                    that.log("Starting cleaning...");
+                    let eco = that.vacuumRobotEcoService.getCharacteristic(Characteristic.On).value;
+                    let nogoLines = that.vacuumRobotNoGoLinesService.getCharacteristic(Characteristic.On).value;
+                    that.robot.startCleaning(eco, 'normal', nogoLines, function(error) {
+                        if (error) {
+                            that.log.error("Start failed:", error.message);
+                        }
+                        callback(error);
+                    });
+                } else {
+                    that.log("Robot can't start right now");
+                    callback();
+                }
+            } else {
+                // Ausschalten = Pause
+                if (that.robot.canPause) {
+                    that.log("Pausing cleaning...");
+                    that.robot.pauseCleaning(function(error) {
+                        if (error) {
+                            that.log.error("Pause failed:", error.message);
+                        } else {
+                            that.log("✓ Paused successfully");
+                        }
+                        callback(error);
+                    });
+                } else {
+                    that.log("Robot can't pause right now (state:", that.robot.state, ")");
+                    callback();
+                }
+            }
+        });
+    },
+
+    setSpotClean: function (on, callback) {
+        let that = this;
+        this.updateRobot(function () {
+            if (on && that.robot.canStart) {
+                that.log("Starting spot cleaning");
+                let eco = that.vacuumRobotEcoService.getCharacteristic(Characteristic.On).value;
+                that.robot.startSpotCleaning(eco, 200, 200, false, 'normal', callback);
+            } else {
+                callback();
+            }
+        });
+    },
+
+    setGoToDock: function (on, callback) {
+        if (on) {
+            this.log("Sending robot to dock...");
+            this.robot.sendToBase(function(error) {
+                if (error) {
+                    this.log.error("Return to base failed:", error.message);
+                } else {
+                    this.log("✓ Returning to base");
+                }
+                // Schalter automatisch zurücksetzen
+                setTimeout(() => {
+                    this.vacuumRobotGoToDockService.setCharacteristic(Characteristic.On, false);
+                }, 1000);
+                callback(error);
+            }.bind(this));
+        } else {
+            callback();
+        }
+    },
+
+    setEco: function (on, callback) {
+        this.robot.eco = on;
+        this.log("Eco mode:", on);
+        callback();
+    },
+
+    setNoGoLines: function (on, callback) {
+        this.robot.noGoLines = on;
+        this.log("NoGo lines:", on);
+        callback();
+    },
+
+    getClean: function (callback) {
+        let that = this;
+        this.updateRobot(function () {
+            // Schalter ist AN wenn Robot am Reinigen ist
+            let isOn = that.robot.canPause || that.robot.state === 2;
+            callback(false, isOn);
+        });
+    },
+
+    getSpotClean: function (callback) {
+        callback(false, false);
+    },
+
+    getGoToDock: function (callback) {
+        callback(false, false);
+    },
+
+    getDock: function (callback) {
+        let that = this;
+        this.updateRobot(function () {
+            // 1 = Bewegung erkannt (= angedockt), 0 = keine Bewegung (= nicht angedockt)
+            callback(false, that.robot.isDocked ? 1 : 0);
+        });
+    },
+
+    getEco: function (callback) {
+        callback(false, this.robot.eco);
+    },
+
+    getNoGoLines: function (callback) {
+        callback(false, this.robot.noGoLines);
+    },
+
+    getBatteryLevel: function (callback) {
+        let that = this;
+        this.updateRobot(function () {
+            callback(false, that.robot.charge);
+        });
+    },
+
+    getBatteryChargingState: function (callback) {
+        let that = this;
+        this.updateRobot(function () {
+            callback(false, that.robot.isCharging);
+        });
+    },
+
+    updateRobot: function (callback) {
+        let that = this;
+        
+        // Cache für 2 Sekunden
+        if (this.lastUpdate !== null && new Date() - this.lastUpdate < 2000) {
+            return callback();
+        }
+
+        this.robot.getState(function (error, result) {
+            if (error) {
+                that.log.error("Error updating robot:", error.message);
+                return callback(error);
+            }
+            
+            that.lastUpdate = new Date();
+            callback();
+        });
+    },
+
+    updateRobotTimer: function () {
+        let that = this;
+        this.updateRobot(function () {
+            // Update HomeKit characteristics
+            let isOn = that.robot.canPause || that.robot.state === 2;
+            that.vacuumRobotCleanService.setCharacteristic(Characteristic.On, isOn);
+            that.vacuumRobotDockStateService.setCharacteristic(Characteristic.OccupancyDetected, that.robot.isDocked ? 1 : 0);
+            that.vacuumRobotBatteryService.setCharacteristic(Characteristic.BatteryLevel, that.robot.charge);
+            that.vacuumRobotBatteryService.setCharacteristic(Characteristic.ChargingState, that.robot.isCharging);
+
+            // Refresh interval
+            if (that.robot.canPause && that.refresh !== 0) {
+                let refreshTime = that.refresh === 'auto' ? 60 : that.refresh;
+                that.timer = setTimeout(that.updateRobotTimer.bind(that), refreshTime * 1000);
+            } else if (that.refresh !== 'auto' && that.refresh !== 0) {
+                that.timer = setTimeout(that.updateRobotTimer.bind(that), that.refresh * 1000);
+            }
+        });
+    }
+};

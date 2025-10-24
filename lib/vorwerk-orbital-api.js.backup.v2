@@ -45,14 +45,18 @@ class VorwerkOrbitalClient {
                     
                     if (res.statusCode >= 200 && res.statusCode < 300) {
                         callback(null, json);
-                    } else if (res.statusCode === 204) {
-                        callback(null, {});
                     } else {
-                        console.log('[VorwerkVR7] Error response:', json);
-                        callback(new Error(`API Error: ${res.statusCode}`), json);
+                        console.log('[VorwerkVR7] Error:', json);
+                        // 204 No Content ist OK
+                        if (res.statusCode === 204) {
+                            callback(null, {});
+                        } else {
+                            callback(new Error(`API Error: ${res.statusCode}`), json);
+                        }
                     }
                 } catch (e) {
-                    if (res.statusCode === 204 || res.statusCode === 200) {
+                    // Leere Response bei 204/200 ist OK
+                    if (res.statusCode === 204 || (res.statusCode === 200 && !body)) {
                         callback(null, {});
                     } else {
                         console.log('[VorwerkVR7] Parse error:', e.message);
@@ -107,21 +111,15 @@ class VorwerkVR7Robot {
         this._client = client;
         
         this.name = data.name || 'VR7';
-        this._serial = data.serial;
+        this._serial = data.serial || data.serialNo;
         this._robotId = data.id;
         this._model = data.model_name || 'VRXX';
-        this._vendor = data.vendor || '3';
         
-        console.log('[VorwerkVR7] Robot initialized:', {
-            name: this.name,
-            uuid: this._robotId,
-            serial: this._serial,
-            vendor: this._vendor
-        });
+        console.log('[VorwerkVR7] Robot:', this.name, 'ID:', this._robotId);
         
-        // Status defaults
+        // Status - wird von getState() aktualisiert
         this.state = 1; // idle
-        this.charge = 75; // placeholder
+        this.charge = 50; // Default
         this.isDocked = true;
         this.isCharging = false;
         this.eco = false;
@@ -129,7 +127,6 @@ class VorwerkVR7Robot {
         
         this._floorplanUuid = '2725adb9-9838-42ce-bdd0-12cf62a58165';
         
-        // Capabilities
         this.canStart = true;
         this.canResume = false;
         this.canPause = false;
@@ -137,9 +134,47 @@ class VorwerkVR7Robot {
         this.dockHasBeenSeen = true;
     }
 
-    // Dummy getState - kein Status-Polling
     getState(callback) {
-        callback(null, {});
+        console.log('[VorwerkVR7] Getting cleaning history for state...');
+        
+        // KORREKTER ENDPOINT: /robots/{id}/cleanings (zeigt letzten Status)
+        this._client._request(ORBITAL_HOST, 'GET', `/robots/${this._robotId}/cleanings`, null, (error, data) => {
+            if (error) {
+                console.log('[VorwerkVR7] Error getting cleanings:', error.message);
+                return callback(error);
+            }
+
+            if (data && Array.isArray(data) && data.length > 0) {
+                const lastCleaning = data[0];
+                console.log('[VorwerkVR7] Last cleaning:', JSON.stringify(lastCleaning));
+                
+                // Parse state from last cleaning
+                if (lastCleaning.runs && lastCleaning.runs.length > 0) {
+                    const run = lastCleaning.runs[0];
+                    const runState = run.state;
+                    
+                    console.log('[VorwerkVR7] Run state:', runState);
+                    
+                    // State mapping
+                    const stateMap = {
+                        'idle': 1,
+                        'paused': 3,
+                        'cleaning': 2,
+                        'done': 1,
+                        'error': 4
+                    };
+                    
+                    this.state = stateMap[runState] || 1;
+                    this.canStart = (runState === 'idle' || runState === 'done');
+                    this.canPause = (runState === 'cleaning');
+                    this.canResume = (runState === 'paused');
+                    
+                    console.log('[VorwerkVR7] State:', this.state, 'canStart:', this.canStart, 'canPause:', this.canPause);
+                }
+            }
+
+            callback(null, data);
+        });
     }
 
     startCleaning(eco, navigationMode, noGoLines, callback) {
@@ -161,15 +196,12 @@ class VorwerkVR7Robot {
 
         console.log('[VorwerkVR7] Command:', JSON.stringify(command));
 
-        // START verwendet UUID
         this._client._request(ORBITAL_HOST, 'POST', `/robots/${this._robotId}/cleaning/v2`, command, (error, result) => {
             if (!error) {
                 console.log('[VorwerkVR7] ✓ Cleaning started');
-                this.state = 2; // cleaning
+                this.state = 2;
                 this.canPause = true;
                 this.canStart = false;
-            } else {
-                console.log('[VorwerkVR7] ✗ Start failed:', error.message);
             }
             callback(error, result);
         });
@@ -178,19 +210,15 @@ class VorwerkVR7Robot {
     pauseCleaning(callback) {
         console.log('[VorwerkVR7] PAUSE cleaning');
         
-        const command = {
-            ability: 'cleaning.pause'
-        };
-
-        // PAUSE verwendet Serial Number
-        this._client._request(ORBITAL_HOST, 'POST', `/vendors/${this._vendor}/robots/${this._serial}/messages`, command, (error, result) => {
+        // KORREKTER ENDPOINT: PUT /robots/{id}/cleaning/pause
+        this._client._request(ORBITAL_HOST, 'PUT', `/robots/${this._robotId}/cleaning/pause`, {}, (error, result) => {
             if (!error) {
                 console.log('[VorwerkVR7] ✓ Paused');
-                this.state = 3; // paused
+                this.state = 3;
                 this.canResume = true;
                 this.canPause = false;
             } else {
-                console.log('[VorwerkVR7] ✗ Pause failed:', error.message);
+                console.log('[VorwerkVR7] Pause error:', error.message);
             }
             callback(error, result);
         });
@@ -199,38 +227,30 @@ class VorwerkVR7Robot {
     resumeCleaning(callback) {
         console.log('[VorwerkVR7] RESUME cleaning');
         
-        const command = {
-            ability: 'cleaning.resume'
-        };
-
-        // RESUME verwendet Serial Number
-        this._client._request(ORBITAL_HOST, 'POST', `/vendors/${this._vendor}/robots/${this._serial}/messages`, command, (error, result) => {
+        // KORREKTER ENDPOINT: PUT /robots/{id}/cleaning/resume
+        this._client._request(ORBITAL_HOST, 'PUT', `/robots/${this._robotId}/cleaning/resume`, {}, (error, result) => {
             if (!error) {
                 console.log('[VorwerkVR7] ✓ Resumed');
-                this.state = 2; // cleaning
+                this.state = 2;
                 this.canPause = true;
                 this.canResume = false;
             } else {
-                console.log('[VorwerkVR7] ✗ Resume failed:', error.message);
+                console.log('[VorwerkVR7] Resume error:', error.message);
             }
             callback(error, result);
         });
     }
 
     sendToBase(callback) {
-        console.log('[VorwerkVR7] RETURN TO BASE');
+        console.log('[VorwerkVR7] SEND TO BASE');
         
-        const command = {
-            ability: 'navigation.return_to_base'
-        };
-
-        // RETURN TO BASE verwendet Serial Number
-        this._client._request(ORBITAL_HOST, 'POST', `/vendors/${this._vendor}/robots/${this._serial}/messages`, command, (error, result) => {
+        // KORREKTER ENDPOINT: PUT /robots/{id}/cleaning/stop
+        this._client._request(ORBITAL_HOST, 'PUT', `/robots/${this._robotId}/cleaning/stop`, {}, (error, result) => {
             if (!error) {
-                console.log('[VorwerkVR7] ✓ Returning to base');
-                this.state = 1; // idle
+                console.log('[VorwerkVR7] ✓ Stopped, returning to base');
+                this.state = 1;
             } else {
-                console.log('[VorwerkVR7] ✗ Return to base failed:', error.message);
+                console.log('[VorwerkVR7] Stop error:', error.message);
             }
             callback(error, result);
         });

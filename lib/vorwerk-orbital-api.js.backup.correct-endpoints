@@ -1,0 +1,407 @@
+'use strict';
+
+const https = require('https');
+
+const ORBITAL_HOST = 'orbital.ksecosys.com';
+const BEEHIVE_HOST = 'beehive.ksecosys.com';
+
+class VorwerkOrbitalClient {
+    constructor() {
+        this.token = null;
+    }
+
+    setToken(token) {
+        this.token = token;
+    }
+
+    _request(hostname, method, path, data, callback) {
+        const options = {
+            hostname: hostname,
+            path: path,
+            method: method,
+            headers: {
+                'Authorization': 'Auth0Bearer ' + this.token,
+                'Accept': 'application/vnd.neato.orbital-http.v1+json',
+                'Content-Type': 'application/json',
+                'User-Agent': 'MyKobold/3.12.0'
+            }
+        };
+
+        if (data) {
+            const body = JSON.stringify(data);
+            options.headers['Content-Length'] = Buffer.byteLength(body);
+        }
+
+        const req = https.request(options, (res) => {
+            let body = '';
+            
+            res.on('data', (chunk) => {
+                body += chunk;
+            });
+            
+            res.on('end', () => {
+                try {
+                    const json = body ? JSON.parse(body) : null;
+                    
+                    if (res.statusCode >= 200 && res.statusCode < 300) {
+                        callback(null, json);
+                    } else {
+                        callback(new Error(`API Error: ${res.statusCode}`), json);
+                    }
+                } catch (e) {
+                    callback(e, body);
+                }
+            });
+        });
+
+        req.on('error', (e) => {
+            callback(e);
+        });
+
+        if (data) {
+            req.write(JSON.stringify(data));
+        }
+
+        req.end();
+    }
+
+    getRobots(callback) {
+        this._request(ORBITAL_HOST, 'GET', '/users/me/robots', null, (error, data) => {
+            if (error) {
+                return callback(error);
+            }
+            this._processRobots(data, callback);
+        });
+    }
+
+    _processRobots(data, callback) {
+        if (!data || !Array.isArray(data)) {
+            console.log('[VorwerkVR7] API Response is not an array');
+            return callback(null, []);
+        }
+
+        console.log('[VorwerkVR7] Found', data.length, 'robot(s) in API response');
+
+        const robots = data.filter(r => {
+            const modelName = r.model_name || r.model || '';
+            const vendor = r.vendor || '';
+            return modelName.includes('VR') || vendor === '3' || vendor === 3;
+        }).map(robotData => new VorwerkVR7Robot(robotData, this));
+        
+        console.log('[VorwerkVR7] Created', robots.length, 'VR7 robot(s)');
+        
+        callback(null, robots);
+    }
+}
+
+class VorwerkVR7Robot {
+    constructor(data, client) {
+        this._data = data;
+        this._client = client;
+        
+        this.name = data.name || data.nickname || 'VR7';
+        this._serial = data.serial || data.serialNo;
+        this._robotId = data.id || data.robotId;
+        this._model = data.model_name || data.model || 'VRXX';
+        
+        console.log('[VorwerkVR7] Robot:', this.name, 'ID:', this._robotId);
+        
+        // Status - defaults setzen
+        this.state = 1; // idle
+        this.charge = 0; // wird von API aktualisiert
+        this.isDocked = false; // wird von API aktualisiert
+        this.isCharging = false; // wird von API aktualisiert
+        this.eco = false;
+        this.noGoLines = true;
+        this.isScheduleEnabled = false;
+        
+        // Floorplan
+        this._floorplanUuid = '2725adb9-9838-42ce-bdd0-12cf62a58165';
+        
+        // Capabilities
+        this.canStart = true;
+        this.canResume = false;
+        this.canPause = false;
+        this.canGoToBase = true;
+        this.dockHasBeenSeen = true;
+    }
+
+    getState(callback) {
+        // Hole Status von Beehive API (hat detailliertere Infos)
+        this._client._request(BEEHIVE_HOST, 'GET', `/users/me/robots`, null, (error, data) => {
+            if (error) {
+                console.log('[VorwerkVR7] Beehive API error, trying Orbital...');
+                // Fallback zu Orbital
+                this._getOrbitalState(callback);
+                return;
+            }
+
+            if (data && Array.isArray(data)) {
+                const robotData = data.find(r => r.id === this._robotId || r.serial === this._serial);
+                
+                if (robotData) {
+                    console.log('[VorwerkVR7] Beehive state:', JSON.stringify(robotData.details || {}));
+                    this._updateFromBeehive(robotData);
+                    callback(null, robotData);
+                } else {
+                    // Fallback
+                    this._getOrbitalState(callback);
+                }
+            } else {
+                this._getOrbitalState(callback);
+            }
+        });
+    }
+
+    _getOrbitalState(callback) {
+        this._client._request(ORBITAL_HOST, 'GET', `/robots/${this._robotId}/features`, null, (error, data) => {
+            if (error) {
+                console.log('[VorwerkVR7] Error getting state:', error.message);
+                return callback(error);
+            }
+
+            if (data) {
+                console.log('[VorwerkVR7] Orbital features:', JSON.stringify(data));
+                this._updateFromFeatures(data);
+            }
+
+            callback(null, data);
+        });
+    }
+
+    _updateFromBeehive(robotData) {
+        // Beehive API hat detailliertere Status-Info
+        console.log('[VorwerkVR7] Updating from Beehive API');
+        
+        // State mapping
+        const state = robotData.state;
+        const stateMap = {
+            1: 'idle',
+            2: 'cleaning',
+            3: 'paused',
+            4: 'error'
+        };
+        console.log('[VorwerkVR7] State code:', state, '=', stateMap[state] || 'unknown');
+        this.state = state || 1;
+
+        // Details object
+        if (robotData.details) {
+            const details = robotData.details;
+            
+            // WICHTIG: Battery charge
+            if (details.charge !== undefined) {
+                this.charge = details.charge;
+                console.log('[VorwerkVR7] Battery:', this.charge, '%');
+            }
+
+            // WICHTIG: Dock status
+            if (details.isDocked !== undefined) {
+                this.isDocked = details.isDocked;
+                console.log('[VorwerkVR7] Docked:', this.isDocked);
+            }
+
+            // WICHTIG: Charging status
+            if (details.isCharging !== undefined) {
+                this.isCharging = details.isCharging;
+                console.log('[VorwerkVR7] Charging:', this.isCharging);
+            }
+
+            // Available commands
+            if (details.availableCommands) {
+                this.canStart = details.availableCommands.start === true;
+                this.canPause = details.availableCommands.pause === true;
+                this.canResume = details.availableCommands.resume === true;
+                this.canGoToBase = details.availableCommands.goToBase === true;
+                
+                console.log('[VorwerkVR7] Commands - start:', this.canStart, 
+                           'pause:', this.canPause, 'resume:', this.canResume, 
+                           'goToBase:', this.canGoToBase);
+            }
+        }
+    }
+
+    _updateFromFeatures(features) {
+        console.log('[VorwerkVR7] Updating from Orbital features');
+        
+        if (features.state) {
+            const stateMap = {
+                'idle': 1,
+                'ready': 1,
+                'cleaning': 2,
+                'busy': 2,
+                'paused': 3,
+                'stopped': 3,
+                'error': 4
+            };
+            this.state = stateMap[features.state] || 1;
+            console.log('[VorwerkVR7] State:', features.state, '->', this.state);
+        }
+
+        if (features.battery !== undefined) {
+            this.charge = features.battery;
+            console.log('[VorwerkVR7] Battery:', this.charge);
+        }
+
+        if (features.isDocked !== undefined) {
+            this.isDocked = features.isDocked;
+            console.log('[VorwerkVR7] Docked:', this.isDocked);
+        }
+
+        if (features.isCharging !== undefined) {
+            this.isCharging = features.isCharging;
+            console.log('[VorwerkVR7] Charging:', this.isCharging);
+        }
+
+        // Capabilities
+        this.canStart = this.state === 1;
+        this.canPause = this.state === 2;
+        this.canResume = this.state === 3;
+        this.canGoToBase = true; // immer verfügbar
+    }
+
+    _getFloorplan(callback) {
+        if (this._floorplanUuid) {
+            return callback(null, this._floorplanUuid);
+        }
+
+        this._client._request(ORBITAL_HOST, 'GET', `/robots/${this._robotId}/floorplans`, null, (error, data) => {
+            if (error || !data || !Array.isArray(data) || data.length === 0) {
+                this._floorplanUuid = '2725adb9-9838-42ce-bdd0-12cf62a58165';
+                return callback(null, this._floorplanUuid);
+            }
+
+            this._floorplanUuid = data[0].uuid || data[0].id || '2725adb9-9838-42ce-bdd0-12cf62a58165';
+            callback(null, this._floorplanUuid);
+        });
+    }
+
+    startCleaning(eco, navigationMode, noGoLines, callback) {
+        console.log('[VorwerkVR7] START cleaning - eco:', eco, 'noGoLines:', noGoLines);
+        
+        this._getFloorplan((err, floorplanUuid) => {
+            const command = {
+                runs: [
+                    {
+                        map: {
+                            floorplan_uuid: floorplanUuid,
+                            zone_uuid: null,
+                            nogo_enabled: noGoLines
+                        },
+                        settings: {
+                            mode: eco ? 'eco' : 'auto',
+                            navigation_mode: navigationMode || 'normal'
+                        }
+                    }
+                ]
+            };
+
+            console.log('[VorwerkVR7] Cleaning command:', JSON.stringify(command));
+            this._client._request(ORBITAL_HOST, 'POST', `/robots/${this._robotId}/cleaning/v2`, command, (error, result) => {
+                if (!error) {
+                    console.log('[VorwerkVR7] ✓ Cleaning started');
+                    this.state = 2; // cleaning
+                    this.canPause = true;
+                    this.canStart = false;
+                }
+                callback(error, result);
+            });
+        });
+    }
+
+    pauseCleaning(callback) {
+        console.log('[VorwerkVR7] PAUSE cleaning');
+        
+        const command = { 
+            action: 'pause' 
+        };
+
+        this._client._request(ORBITAL_HOST, 'POST', `/robots/${this._robotId}/state`, command, (error, result) => {
+            if (!error) {
+                console.log('[VorwerkVR7] ✓ Cleaning paused');
+                this.state = 3; // paused
+                this.canResume = true;
+                this.canPause = false;
+            } else {
+                console.log('[VorwerkVR7] ✗ Pause failed:', error.message);
+            }
+            callback(error, result);
+        });
+    }
+
+    resumeCleaning(callback) {
+        console.log('[VorwerkVR7] RESUME cleaning');
+        
+        const command = { 
+            action: 'resume' 
+        };
+
+        this._client._request(ORBITAL_HOST, 'POST', `/robots/${this._robotId}/state`, command, (error, result) => {
+            if (!error) {
+                console.log('[VorwerkVR7] ✓ Cleaning resumed');
+                this.state = 2; // cleaning
+                this.canPause = true;
+                this.canResume = false;
+            } else {
+                console.log('[VorwerkVR7] ✗ Resume failed:', error.message);
+            }
+            callback(error, result);
+        });
+    }
+
+    sendToBase(callback) {
+        console.log('[VorwerkVR7] SEND TO BASE');
+        
+        const command = { 
+            action: 'return_to_base' 
+        };
+
+        this._client._request(ORBITAL_HOST, 'POST', `/robots/${this._robotId}/state`, command, (error, result) => {
+            if (!error) {
+                console.log('[VorwerkVR7] ✓ Returning to base');
+                this.state = 1; // idle
+            } else {
+                console.log('[VorwerkVR7] ✗ Return to base failed:', error.message);
+            }
+            callback(error, result);
+        });
+    }
+
+    startSpotCleaning(eco, width, height, repeat, navigationMode, callback) {
+        console.log('[VorwerkVR7] SPOT cleaning');
+        
+        this._getFloorplan((err, floorplanUuid) => {
+            const command = {
+                runs: [
+                    {
+                        map: {
+                            floorplan_uuid: floorplanUuid,
+                            spot_cleaning: {
+                                width: width || 200,
+                                height: height || 200
+                            }
+                        },
+                        settings: {
+                            mode: eco ? 'eco' : 'auto',
+                            navigation_mode: navigationMode || 'normal'
+                        }
+                    }
+                ]
+            };
+
+            this._client._request(ORBITAL_HOST, 'POST', `/robots/${this._robotId}/cleaning/v2`, command, callback);
+        });
+    }
+
+    enableSchedule(callback) {
+        callback(new Error('Schedule control not yet implemented'));
+    }
+
+    disableSchedule(callback) {
+        callback(new Error('Schedule control not yet implemented'));
+    }
+}
+
+module.exports = {
+    Client: VorwerkOrbitalClient,
+    Robot: VorwerkVR7Robot
+};
