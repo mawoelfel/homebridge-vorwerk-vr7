@@ -2,43 +2,60 @@
 
 All notable changes to this project will be documented in this file.
 
-## [3.0.0] - 2024-10-24
+## [3.1.0] - 2024-10-24
 
-### 🎉 MAJOR RELEASE - ALL FUNCTIONS WORKING!
+### 🎉 MAJOR UPDATE - New Features!
 
-This is the **first fully working version** with all control functions operational!
+This release adds three major new features discovered through mitmproxy capture:
 
-#### ✅ What's Fixed - EVERYTHING!
+#### ✨ New Features
 
-**All control functions now work correctly** by using the proper API endpoints discovered through comprehensive mitmproxy capture:
+**1. 🔊 Find Me Function**
+- Robot beeps and flashes LED to help locate it
+- Perfect when robot is stuck under furniture
+- Endpoint: `POST /vendors/3/robots/{serial}/messages` with `{"ability":"utilities.find_me"}`
+- HomeKit: Switch "VR7 Find Me"
 
-- ✅ **START Cleaning** - Works perfectly
-- ✅ **PAUSE Cleaning** - NOW WORKS! 🎉
-- ✅ **RESUME Cleaning** - NOW WORKS! 🎉
-- ✅ **RETURN TO BASE** - NOW WORKS! 🎉
-- ✅ **Eco Mode** - Applied correctly
-- ✅ **NoGo Lines** - Applied correctly
-- ✅ **Spot Cleaning** - Works
+**2. 🗑️ Empty Dustbin (Auto-Extraction)**
+- Triggers automatic dustbin emptying at the dock
+- Only works with compatible charging stations
+- Endpoint: `POST /vendors/3/robots/{serial}/messages` with `{"ability":"extraction.start"}`
+- HomeKit: Switch "VR7 Empty Dustbin"
 
-#### 🔧 Technical Breakthrough
+**3. 🗺️ Zone/Room Cleaning**
+- Clean specific rooms instead of entire house
+- Loads available zones from robot's map
+- Endpoint: `GET /maps/floorplans/{uuid}/tracks`
+- Uses same cleaning API with `zone_uuid` parameter
+- HomeKit: One switch per room (e.g., "VR7 Kitchen", "VR7 Living Room")
 
-The plugin now uses **TWO different API patterns** discovered through actual app traffic capture:
+**4. 🤖 Native HomeKit Vacuum Service**
+- Robot appears as native Vacuum Cleaner in HomeKit (iOS 18.4+)
+- Proper vacuum icon and controls
+- States: Idle, Cleaning, Returning to Dock
+- Intelligent feature detection:
+  - If `Characteristic.TargetCleaningMode` available → Native eco/auto selection
+  - If not available → Falls back to "Eco Mode" switch
+  - If `Characteristic.RoomSelector` available → Native room selection
+  - If not available → Individual room switches
 
-**Pattern 1: Start Cleaning (uses robot UUID)**
-```http
-POST https://orbital.ksecosys.com/robots/{robot_uuid}/cleaning/v2
-Content-Type: application/json
+#### 🔧 Technical Improvements
 
-{
-  "runs": [{
-    "map": {
-      "nogo_enabled": true,
-      "zone_uuid": null,
-      "floorplan_uuid": "uuid"
-    },
-    "settings": {
-      "mode": "eco",
-      "navigation_mode": "normal"
-    }
-  }]
-}
+**API Library (lib/vorwerk-orbital-api.js):**
+- Added `findMe()` function
+- Added `emptyDustbin()` function
+- Added `getZones()` function to load room list
+- Added `startZoneCleaning(zoneUuid, eco, noGoLines, callback)` function
+- Better error logging
+
+**HomeKit Integration (index.js):**
+- Now uses `Service.VacuumCleaner` (native vacuum service)
+- `Characteristic.Active` - On/Off control
+- `Characteristic.CurrentVacuumState` - Status display
+- `Characteristic.TargetVacuumState` - Manual/Auto/Stop
+- Optional `Characteristic.TargetCleaningMode` - Eco/Auto (if supported by Homebridge)
+- Intelligent characteristic detection
+- Dynamic room switches based on loaded zones
+- Auto-off for momentary switches (Find Me, Empty Dustbin)
+
+#### 📋 Complete API Endpoints

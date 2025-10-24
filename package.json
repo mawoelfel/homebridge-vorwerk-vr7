@@ -1,7 +1,7 @@
 {
   "name": "homebridge-vorwerk-vr7",
-  "version": "3.0.0",
-  "description": "Homebridge plugin for Vorwerk Kobold VR7 vacuum robot - FULLY WORKING with correct API endpoints",
+  "version": "3.1.0",
+  "description": "Homebridge plugin for Vorwerk Kobold VR7 - FULLY WORKING with Native Vacuum Service, Find Me, Empty Dustbin, and Zone Cleaning",
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
@@ -24,7 +24,15 @@
     "working",
     "pause",
     "resume",
-    "dock"
+    "dock",
+    "find me",
+    "empty dustbin",
+    "zone cleaning",
+    "room cleaning",
+    "native vacuum",
+    "ios 18.4",
+    "cleaning mode",
+    "eco mode"
   ],
   "author": "Marcel Wölfel <mawoelfel>",
   "license": "MIT",
