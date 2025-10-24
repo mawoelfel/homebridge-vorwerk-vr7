@@ -1,6 +1,6 @@
 {
   "name": "homebridge-vorwerk-vr7",
-  "version": "3.1.0",
+  "version": "0.3.1",
   "description": "Homebridge plugin for Vorwerk Kobold VR7 - FULLY WORKING with Native Vacuum Service, Find Me, Empty Dustbin, and Zone Cleaning",
   "main": "index.js",
   "scripts": {

@@ -2,60 +2,70 @@
 
 All notable changes to this project will be documented in this file.
 
-## [3.1.0] - 2024-10-24
+## [0.3.1] - 2025-10-24
 
-### 🎉 MAJOR UPDATE - New Features!
+### 🎉 Major Release - Complete Feature Set!
 
-This release adds three major new features discovered through mitmproxy capture:
+This is a complete rewrite with all features working correctly, discovered through comprehensive mitmproxy analysis of the MyKobold iOS app.
 
-#### ✨ New Features
+#### ✨ What Works - EVERYTHING!
 
-**1. 🔊 Find Me Function**
-- Robot beeps and flashes LED to help locate it
-- Perfect when robot is stuck under furniture
-- Endpoint: `POST /vendors/3/robots/{serial}/messages` with `{"ability":"utilities.find_me"}`
-- HomeKit: Switch "VR7 Find Me"
+**Core Functions:**
+- ✅ **START Cleaning** - Full house or specific room
+- ✅ **PAUSE Cleaning** - Pause active session
+- ✅ **RESUME Cleaning** - Resume paused session
+- ✅ **RETURN TO BASE** - Send to charging station
+- ✅ **Eco Mode** - Energy-saving cleaning
+- ✅ **NoGo Lines** - Respect virtual boundaries
+- ✅ **Spot Cleaning** - Clean specific areas
 
-**2. 🗑️ Empty Dustbin (Auto-Extraction)**
-- Triggers automatic dustbin emptying at the dock
-- Only works with compatible charging stations
-- Endpoint: `POST /vendors/3/robots/{serial}/messages` with `{"ability":"extraction.start"}`
-- HomeKit: Switch "VR7 Empty Dustbin"
+**New Features (v0.3.1):**
+- 🆕 **Find Me** - Robot beeps and flashes LED
+- 🆕 **Empty Dustbin** - Trigger auto-extraction at dock
+- 🆕 **Zone Cleaning** - Clean specific rooms
+- 🆕 **Native Vacuum Service** - Proper HomeKit vacuum icon (iOS 18.4+)
 
-**3. 🗺️ Zone/Room Cleaning**
-- Clean specific rooms instead of entire house
-- Loads available zones from robot's map
-- Endpoint: `GET /maps/floorplans/{uuid}/tracks`
-- Uses same cleaning API with `zone_uuid` parameter
-- HomeKit: One switch per room (e.g., "VR7 Kitchen", "VR7 Living Room")
+#### 🔧 Technical Implementation
 
-**4. 🤖 Native HomeKit Vacuum Service**
-- Robot appears as native Vacuum Cleaner in HomeKit (iOS 18.4+)
-- Proper vacuum icon and controls
-- States: Idle, Cleaning, Returning to Dock
-- Intelligent feature detection:
-  - If `Characteristic.TargetCleaningMode` available → Native eco/auto selection
-  - If not available → Falls back to "Eco Mode" switch
-  - If `Characteristic.RoomSelector` available → Native room selection
-  - If not available → Individual room switches
+**API Endpoints Discovered:**
 
-#### 🔧 Technical Improvements
+```javascript
+// Get Robots
+GET https://orbital.ksecosys.com/users/me/robots
 
-**API Library (lib/vorwerk-orbital-api.js):**
-- Added `findMe()` function
-- Added `emptyDustbin()` function
-- Added `getZones()` function to load room list
-- Added `startZoneCleaning(zoneUuid, eco, noGoLines, callback)` function
-- Better error logging
+// Get Zones/Rooms
+GET https://orbital.ksecosys.com/maps/floorplans/{floorplan_uuid}/tracks
 
-**HomeKit Integration (index.js):**
-- Now uses `Service.VacuumCleaner` (native vacuum service)
-- `Characteristic.Active` - On/Off control
-- `Characteristic.CurrentVacuumState` - Status display
-- `Characteristic.TargetVacuumState` - Manual/Auto/Stop
-- Optional `Characteristic.TargetCleaningMode` - Eco/Auto (if supported by Homebridge)
-- Intelligent characteristic detection
-- Dynamic room switches based on loaded zones
-- Auto-off for momentary switches (Find Me, Empty Dustbin)
+// Start Cleaning (uses UUID)
+POST https://orbital.ksecosys.com/robots/{robot_uuid}/cleaning/v2
+Body: {
+  "runs": [{
+    "map": {
+      "floorplan_uuid": "...",
+      "zone_uuid": null,  // or specific zone UUID
+      "nogo_enabled": true
+    },
+    "settings": {
+      "mode": "eco",  // or "auto"
+      "navigation_mode": "normal"
+    }
+  }]
+}
 
-#### 📋 Complete API Endpoints
+// Control Commands (uses Serial Number)
+POST https://orbital.ksecosys.com/vendors/3/robots/{serial}/messages
+
+// Pause
+{"ability": "cleaning.pause"}
+
+// Resume
+{"ability": "cleaning.resume"}
+
+// Return to Base
+{"ability": "navigation.return_to_base"}
+
+// Find Me
+{"ability": "utilities.find_me"}
+
+// Empty Dustbin
+{"ability": "extraction.start"}
